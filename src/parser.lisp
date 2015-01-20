@@ -25,7 +25,7 @@
            :result-macros
            :extract-macros
            :parse-string
-           :parse-pathname))
+           :slurp-file))
 (in-package :cmacro.parser)
 
 (defparameter *text* nil

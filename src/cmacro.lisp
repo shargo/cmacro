@@ -2,9 +2,11 @@
 (defpackage cmacro
   (:use :cl :anaphora)
   (:import-from :cmacro.macroexpand
-                :macroexpand-pathname)
+                :macroexpand-string)
   (:import-from :cmacro.printer
                 :print-ast)
+  (:import-from :cmacro.parser
+                :slurp-file)
   (:export :main))
 (in-package :cmacro)
 
@@ -16,72 +18,22 @@
                           (format t "~A~&" c)
                           (quit)))
 
-(defun get-opt (args boolean options)
-  (first
-   (remove-if #'null
-              (mapcar #'(lambda (opt)
-                          (aif (member opt args :test #'equal)
-                               (if boolean
-                                   (first it)
-                                   (second it))))
-                      options))))
-
-(defun get-binary-opt (args &rest options)
-  (get-opt args t options))
-
-(defun get-opt-value (args &rest options)
-  (get-opt args nil options))
-
-(defun files (args binary-options)
-  (flet ((optp (option)
-           (and (>= (length option) 1)
-                (char= (elt option 0) #\-))))
-    (remove-if #'null
-               (loop for sub-args on args collecting
-                 (if (optp (first sub-args))
-                     ;; Skip
-                     (progn
-                       (unless (member (first sub-args)
-                                       binary-options
-                                       :test #'equal)
-                         (setf sub-args (rest sub-args)))
-                       nil)
-                     ;; It's a file
-                     (first sub-args))))))
-
-(defun process-file (pathname)
-  (print-ast (macroexpand-pathname pathname)))
-
 (defparameter +help+
-"Usage: cmc [file]* [option]*
+  "Usage: cmc [file|expr]+
 
-  -o, --output    Path to the output file
-  -n,--no-expand  Don't macroexpand, but remove macro definitions
-  -h,--help       Print this text")
+  Process all files/expressions as a single file in the order in which they appear in the command line.
+  Expressions begin with a newilne character, anything else is treated as a file name.
+  Output is sent to standard output; for any useful purpose a redirect/pipe should be employed.")
 
 (defun main (args)
-  (let ((files       (mapcar #'parse-namestring
-                             (files (cdr args)
-                                    (list "-n" "--no-expand"))))
-        (output-file (get-opt-value args "-o" "--output"))
-        (helpp       (get-binary-opt args "-h" "--help")))
-    (when helpp
+  (let ((files-exprs (cdr args)))
+    (unless files-exprs
       (format t "~A~%" +help+)
-      (quit))
-    (unless files
       (error 'cmacro.error:no-input-files))
-    (if output-file
-        ;; Write to a file
-        (with-open-file (stream
-                         output-file
-                         :direction :output
-                         :if-does-not-exist :create
-                         :if-exists :supersede)
-          (loop for file in files do
-            (write-string (process-file file)
-                          stream)))
-        ;; Write to stdout
-        (progn
-          (loop for file in files do
-            (write-string (process-file file)))))
+    (labels ((is-expr? (e) (or (= (length e) 0) (char= (elt e 0) #\newline)))
+             (handle-elem (e) (if (is-expr? e) e (slurp-file (parse-namestring e))))
+             (process-string (s) (print-ast (macroexpand-string s)))
+             (combine-all (l) (apply #'concatenate 'string l))
+             (read-all (l) (map 'list #'handle-elem l)))
+      (write-string (process-string (combine-all (read-all files-exprs)))))
     (terpri)))
